@@ -3,7 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const app = express();
 
-const PORT = 3000;
+// Use Vercel's PORT or default to 3000 for local development
+const PORT = process.env.PORT || 3000;
 const ASCII_FILE_PATH = path.join(__dirname, 'pspk.txt');
 
 // Function to scale ASCII art
@@ -13,14 +14,12 @@ function scaleAscii(art, widthScale = 1, heightScale = 1) {
   // Scale height by repeating/skipping lines
   let scaledLines = [];
   if (heightScale >= 1) {
-    // Enlarge: repeat lines
     for (const line of lines) {
       for (let i = 0; i < heightScale; i++) {
         scaledLines.push(line);
       }
     }
   } else {
-    // Shrink: skip lines
     const step = Math.round(1 / heightScale);
     for (let i = 0; i < lines.length; i += step) {
       scaledLines.push(lines[i]);
@@ -31,10 +30,8 @@ function scaleAscii(art, widthScale = 1, heightScale = 1) {
   if (widthScale !== 1) {
     scaledLines = scaledLines.map(line => {
       if (widthScale >= 1) {
-        // Enlarge: repeat characters
         return line.split('').map(char => char.repeat(widthScale)).join('');
       } else {
-        // Shrink: skip characters
         const step = Math.round(1 / widthScale);
         return line.split('').filter((_, i) => i % step === 0).join('');
       }
@@ -44,99 +41,176 @@ function scaleAscii(art, widthScale = 1, heightScale = 1) {
   return scaledLines.join('\n');
 }
 
-// --- Start of Fixes ---
-
-// 1. Read and process the ASCII art file only ONCE at startup.
+// Read and cache the ASCII art at startup
 let scaledArt;
 try {
   const originalArt = fs.readFileSync(ASCII_FILE_PATH, 'utf8');
   scaledArt = scaleAscii(originalArt, 1, 1);
+  console.log('✅ ASCII art loaded successfully');
 } catch (error) {
-  console.error(`FATAL: Could not read or process ASCII art file at ${ASCII_FILE_PATH}.`, error);
-  // If the art is essential, exit. Otherwise, provide fallback content.
-  scaledArt = 'Error: ASCII art file not found.';
-  // process.exit(1); // Uncomment to make the app exit if the file is missing.
+  console.error(`❌ Could not read ASCII art file at ${ASCII_FILE_PATH}`, error.message);
+  scaledArt = 'Error: ASCII art file not found.\n\nPlease ensure pspk.txt exists in the project root.';
 }
 
-
-// 2. Consolidate all request logic into a single handler.
+// Unified request handler
 app.use((req, res) => {
   const userAgent = req.headers['user-agent'] || '';
-  const isCurl = userAgent.toLowerCase().includes('curl');
+  const isCurl = /curl|wget|httpie/i.test(userAgent);
   
+  // Serve plain text for CLI tools
   if (isCurl) {
-    // Always serve plain text art to curl, regardless of the path.
     res.set('Content-Type', 'text/plain; charset=utf-8');
-    res.send(scaledArt);
-  } else {
-    // For browsers:
-    if (req.path === '/') {
-      // If at the root path, serve the HTML page.
-      res.send(`
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-          <title>ASCII Art Display</title>
-          <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <style>
-            body { 
-              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-              max-width: 800px; 
-              margin: 40px auto; 
-              padding: 20px;
-              background-color: #121212;
-              color: #e0e0e0;
-              line-height: 1.6;
-            }
-            pre { 
-              background-color: #000; 
-              color: #0f0; /* Classic green terminal color */
-              padding: 1.5em; 
-              border-radius: 8px;
-              overflow-x: auto;
-              font-size: 2px; /* Small font size to render art correctly */
-              line-height: 1; /* Tight line height for art */
-              white-space: pre;
-            }
-            .command {
-              background-color: #282c34;
-              padding: 12px 15px;
-              border-radius: 5px;
-              font-family: "Courier New", monospace;
-              margin: 20px 0;
-              color: #abb2bf;
-            }
-            h1, h2 {
-              color: #61afef;
-              border-bottom: 1px solid #333;
-              padding-bottom: 5px;
-            }
-            a {
-              color: #98c379;
-            }
-          </style>
-        </head>
-        <body>
-          <h1>ASCII Art Server</h1>
-          <p>This server displays ASCII art. For the best experience, view it in your terminal using curl:</p>
-          <div class="command">curl ${req.protocol}://${req.get('host')}</div>
-          
-          <h2>Browser Preview:</h2>
-          <pre>${scaledArt}</pre>
-        </body>
-        </html>
-      `);
-    } else {
-      // If at any other path, redirect to the root.
-      res.redirect('/');
-    }
+    res.set('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
+    return res.send(scaledArt);
   }
+  
+  // For browsers: redirect non-root paths to root
+  if (req.path !== '/') {
+    return res.redirect(301, '/');
+  }
+  
+  // Serve HTML page at root
+  res.set('Cache-Control', 'public, max-age=3600');
+  const curlCommand = `curl https://${req.get('host')}`;
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>PSPK ASCII Art</title>
+      <style>
+        * {
+          margin: 0;
+          padding: 0;
+          box-sizing: border-box;
+        }
+        
+        body { 
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          background: #0a0a0a;
+          color: #e0e0e0;
+          min-height: 100vh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 20px;
+        }
+        
+        .container {
+          text-align: center;
+        }
+        
+        .command-wrapper {
+          display: inline-flex;
+          align-items: center;
+          background: #1a1a1a;
+          border: 2px solid #333;
+          border-radius: 12px;
+          padding: 20px 25px;
+          gap: 15px;
+          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        }
+        
+        .command {
+          font-family: "SF Mono", "Courier New", monospace;
+          color: #58a6ff;
+          font-size: 1.2em;
+          user-select: all;
+        }
+        
+        .copy-btn {
+          background: #238636;
+          color: white;
+          border: none;
+          padding: 10px 20px;
+          border-radius: 6px;
+          cursor: pointer;
+          font-size: 0.9em;
+          font-weight: 500;
+          transition: all 0.2s;
+          white-space: nowrap;
+        }
+        
+        .copy-btn:hover {
+          background: #2ea043;
+          transform: translateY(-1px);
+        }
+        
+        .copy-btn:active {
+          transform: translateY(0);
+        }
+        
+        .copy-btn.copied {
+          background: #1f6feb;
+        }
+        
+        @media (max-width: 600px) {
+          .command-wrapper {
+            flex-direction: column;
+            gap: 12px;
+          }
+          
+          .command {
+            font-size: 1em;
+          }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="command-wrapper">
+          <code class="command" id="curlCommand">${curlCommand}</code>
+          <button class="copy-btn" id="copyBtn" onclick="copyCommand()">Copy</button>
+        </div>
+      </div>
+      
+      <script>
+        function copyCommand() {
+          const command = document.getElementById('curlCommand').textContent;
+          const btn = document.getElementById('copyBtn');
+          
+          navigator.clipboard.writeText(command).then(() => {
+            btn.textContent = 'Copied!';
+            btn.classList.add('copied');
+            
+            setTimeout(() => {
+              btn.textContent = 'Copy';
+              btn.classList.remove('copied');
+            }, 2000);
+          }).catch(() => {
+            // Fallback for older browsers
+            const textarea = document.createElement('textarea');
+            textarea.value = command;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+            
+            btn.textContent = 'Copied!';
+            btn.classList.add('copied');
+            
+            setTimeout(() => {
+              btn.textContent = 'Copy';
+              btn.classList.remove('copied');
+            }, 2000);
+          });
+        }
+      </script>
+    </body>
+    </html>
+  `);
 });
 
-// --- End of Fixes ---
+// Health check endpoint (useful for monitoring)
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
+// Start server
 app.listen(PORT, () => {
   console.log(`✅ ASCII Art server running on http://localhost:${PORT}`);
-  console.log(`💻 In your terminal, try: curl http://localhost:${PORT}`);
+  console.log(`💻 Try: curl http://localhost:${PORT}`);
 });
