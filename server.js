@@ -54,13 +54,18 @@ try {
 
 // Unified request handler
 app.use((req, res) => {
+  // Health check endpoint
+  if (req.path === '/health') {
+    return res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  }
+  
   const userAgent = req.headers['user-agent'] || '';
   const isCurl = /curl|wget|httpie/i.test(userAgent);
   
-  // Serve plain text for CLI tools
+  // Serve plain text ASCII art for CLI tools
   if (isCurl) {
     res.set('Content-Type', 'text/plain; charset=utf-8');
-    res.set('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
+    res.set('Cache-Control', 'public, max-age=3600');
     return res.send(scaledArt);
   }
   
